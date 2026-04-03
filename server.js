@@ -4,16 +4,7 @@ const mysql = require("mysql2/promise");
 
 const app = express();
 
-const pool = mysql.createPool({
-  host: process.env.MYSQLHOST,
-  user: process.env.MYSQLUSER,
-  password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-});
+const pool = mysql.createPool(process.env.MYSQL_URL + "?connectionLimit=10");
 
 // Parse JSON + formulaire (au cas où)
 app.use(express.json());
