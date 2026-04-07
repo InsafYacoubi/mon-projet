@@ -1,10 +1,23 @@
 const express = require("express");
 const path = require("path");
 const mysql = require("mysql2/promise");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 
 const app = express();
 
-const pool = mysql.createPool(process.env.MYSQL_URL + "?connectionLimit=10");
+const pool = process.env.MYSQL_URL
+  ? mysql.createPool(process.env.MYSQL_URL + "?connectionLimit=10")
+  : mysql.createPool({
+      host: "localhost",
+      user: "root",
+      password: "root1234",
+      database: "california_gym",
+      port: 3306,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+    });
 
 // Parse JSON + formulaire (au cas où)
 app.use(express.json());
@@ -12,6 +25,14 @@ app.use(express.urlencoded({ extended: false }));
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
+});
+
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+app.get("/admin.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
 });
 
 /** Crée la table si absente (colonnes attendues : nom, email, message). */
@@ -28,7 +49,63 @@ async function ensureContactsTable() {
   `);
 }
 
-app.get("/api/contacts", async (req, res) => {
+const ADMIN_EMAIL = "admin@california-gym.com";
+const ADMIN_PASSWORD_HASH = bcrypt.hashSync("Admin1234!", 10);
+const JWT_SECRET = process.env.JWT_SECRET || "california_gym_jwt_secret";
+
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith("Bearer ")
+    ? authHeader.split(" ")[1]
+    : null;
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: "Non autorisé: token manquant." });
+  }
+
+  return jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ success: false, message: "Non autorisé: token invalide." });
+    }
+    req.user = decoded;
+    return next();
+  });
+}
+
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body || {};
+
+  if (!email || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "Email et mot de passe requis.",
+    });
+  }
+
+  const emailOk = String(email).trim().toLowerCase() === ADMIN_EMAIL;
+  const passwordOk = await bcrypt.compare(String(password), ADMIN_PASSWORD_HASH);
+
+  if (!emailOk || !passwordOk) {
+    return res.status(401).json({
+      success: false,
+      message: "Identifiants invalides.",
+    });
+  }
+
+  const token = jwt.sign(
+    { email: ADMIN_EMAIL, role: "admin" },
+    JWT_SECRET,
+    { expiresIn: "24h" }
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: "Connexion réussie.",
+    token,
+  });
+});
+
+app.get("/api/contacts", authenticateToken, async (req, res) => {
   try {
     const [rows] = await pool.execute(
       "SELECT * FROM contacts ORDER BY id DESC"
